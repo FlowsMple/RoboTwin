@@ -1,5 +1,6 @@
 import os
 import re
+import shutil
 import sapien.core as sapien
 from sapien.render import clear_cache as sapien_clear_cache
 from sapien.utils.viewer import Viewer
