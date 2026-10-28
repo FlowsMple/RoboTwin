@@ -1,5 +1,6 @@
 from ._base_task import Base_Task
 from .utils import *
+from .reward import *
 import sapien
 import math
 
@@ -61,6 +62,20 @@ class stack_blocks_three(Base_Task):
         self.prohibited_area.append(target_pose)
         self.block1_target_pose = [0, -0.13, 0.75 + self.table_z_bias, 0, 1, 0, 0]
 
+        self.reward = Reward.build_top(
+            {
+                "type": "Serial",
+                "subtasks": [
+                    Stack(self, max_reward=8.0,
+                         entities=[self.block1, self.block2, self.block3],
+                         eps=[0.13, 0.03], a_ds=[2, 2], c_ds=[3, 5], target_pose=[0, -0.13]),
+                    Success()
+                ],
+                "transition_rewards": [2.0]
+            }
+        )
+        self.step_lim = 800
+
     def play_once(self):
         # Initialize tracking variables for last used gripper and actor
         self.last_gripper = None
@@ -119,6 +134,26 @@ class stack_blocks_three(Base_Task):
         self.last_actor = block
         return str(arm_tag)
 
+
+    def get_info(self):
+        # Initialize tracking variables for last used gripper and actor
+        self.last_gripper = None
+        self.last_actor = None
+        # Pick and place the first block (red) and get which arm was used
+        arm_tag1 = self.pick_and_place_block(self.block1)
+        # Pick and place the second block (green) and get which arm was used
+        arm_tag2 = self.pick_and_place_block(self.block2)
+        # Pick and place the third block (blue) and get which arm was used
+        arm_tag3 = self.pick_and_place_block(self.block3)
+        info = {
+            "{A}": "red block",
+            "{B}": "green block",
+            "{C}": "blue block",
+            "{a}": str(arm_tag1),
+            "{b}": str(arm_tag2),
+            "{c}": str(arm_tag3),
+        }
+        return info
     def check_success(self):
         block1_pose = self.block1.get_pose().p
         block2_pose = self.block2.get_pose().p

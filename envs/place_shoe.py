@@ -1,5 +1,6 @@
 from ._base_task import Base_Task
 from .utils import *
+from .reward import *
 import math
 import sapien
 
@@ -59,6 +60,19 @@ class place_shoe(Base_Task):
         self.prohibited_area.append([-0.2, -0.15, 0.2, -0.01])
         self.add_prohibit_area(self.shoe, padding=0.1)
 
+        self.step_lim = 450
+        self.reward = Reward.build_top(
+            {
+                "type": "Serial",
+                "subtasks": [
+                    Pick(base=self, max_reward=4, entity=self.shoe, dist=0.19),
+                    Place(base=self, max_reward=4, entity=self.shoe, target=[0, -0.08, 0.84, 0.5, 0.5, -0.5, -0.5]),
+                    Success()
+                ],
+                "transition_rewards": [1, 3]
+            }
+        )
+
     def play_once(self):
         shoe_pose = self.shoe.get_pose().p
         arm_tag = ArmTag("left" if shoe_pose[0] < 0 else "right")
@@ -87,6 +101,12 @@ class place_shoe(Base_Task):
         self.info["info"] = {"{A}": f"041_shoe/base{self.shoe_id}", "{a}": str(arm_tag)}
         return self.info
 
+
+    def get_info(self):
+        shoe_pose = self.shoe.get_pose().p
+        arm_tag = ArmTag("left" if shoe_pose[0] < 0 else "right")
+        info = {"{A}": f"041_shoe/base{self.shoe_id}", "{a}": str(arm_tag)}
+        return info
     def check_success(self):
         shoe_pose_p = np.array(self.shoe.get_pose().p)
         shoe_pose_q = np.array(self.shoe.get_pose().q)

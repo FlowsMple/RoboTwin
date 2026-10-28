@@ -104,6 +104,19 @@ class put_object_cabinet(Base_Task):
         }
         return self.info
 
+
+    def get_info(self):
+        arm_tag = ArmTag("right" if self.object.get_pose().p[0] > 0 else "left")
+        self.arm_tag = arm_tag
+        self.origin_z = self.object.get_pose().p[2]
+
+        info = {
+            "{A}": f"{self.selected_modelname}/base{self.selected_model_id}",
+            "{B}": f"036_cabinet/base{0}",
+            "{a}": str(arm_tag),
+            "{b}": str(arm_tag.opposite),
+        }
+        return info
     def check_success(self):
         object_pose = self.object.get_pose().p
         target_pose = self.cabinet.get_functional_point(0)

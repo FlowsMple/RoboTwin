@@ -1,5 +1,6 @@
 from ._base_task import Base_Task
 from .utils import *
+from .reward import *
 import math
 import sapien
 from ._GLOBAL_CONFIGS import *
@@ -87,6 +88,57 @@ class place_dual_shoes(Base_Task):
         self.prohibited_area.append([-0.15, -0.25, 0.15, 0.01])
         self.right_shoe_middle_pose = [0.35, -0.05, 0.79, 0, 1, 0, 0]
 
+        self.reward = Reward.build_top(
+            {
+                "type": "Serial",
+                "subtasks": [
+                    {
+                        "type": "Parallel",
+                        "subtasks": [
+                            {
+                                "type": "Serial",
+                                "subtasks": [
+                                    Pick(
+                                        base=self, max_reward=4, 
+                                        entity=self.left_shoe, dist=0.19,
+                                        arm_tag=0
+                                    ),
+                                    Place(
+                                        base=self, max_reward=4, 
+                                        entity=self.left_shoe, 
+                                        target=[0, -0.13, self.shoe_box.get_pose().p[2], 0.5, 0.5, -0.5, -0.5],
+                                        arm_tag=0
+                                    ),
+                                ],
+                                "transition_rewards": [1]
+                            },
+                            {
+                                "type": "Serial",
+                                "subtasks": [
+                                    Pick(
+                                        base=self, max_reward=4, 
+                                        entity=self.right_shoe, dist=0.19,
+                                        arm_tag=1
+                                    ),
+                                    Place(
+                                        base=self, max_reward=4, 
+                                        entity=self.right_shoe, 
+                                        target=[0, -0.13, self.shoe_box.get_pose().p[2], 0.5, 0.5, -0.5, -0.5],
+                                        arm_tag=1
+                                    ),
+                                ],
+                                "transition_rewards": [1]
+                            },
+                        ],
+                        "weights": [1, 1]
+                    },
+                    Success() 
+                ],
+                "transition_rewards":[3]
+            }
+        )
+        self.step_lim = 450
+
     def play_once(self):
         left_arm_tag = ArmTag("left")
         right_arm_tag = ArmTag("right")
@@ -138,6 +190,13 @@ class place_dual_shoes(Base_Task):
         }
         return self.info
 
+
+    def get_info(self):
+        info = {
+            "{A}": f"041_shoe/base{self.shoe_id}",
+            "{B}": f"007_shoe-box/base0",
+        }
+        return info
     def check_success(self):
         left_shoe_pose_p = np.array(self.left_shoe.get_pose().p)
         left_shoe_pose_q = np.array(self.left_shoe.get_pose().q)

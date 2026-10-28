@@ -1,6 +1,7 @@
 from copy import deepcopy
 from ._base_task import Base_Task
 from .utils import *
+from .reward import *
 import sapien
 import math
 
@@ -35,6 +36,23 @@ class click_bell(Base_Task):
 
         self.add_prohibit_area(self.bell, padding=0.07)
         self.check_arm_function = self.is_left_gripper_close if self.bell.get_pose().p[0] < 0 else self.is_right_gripper_close
+
+        arm_tag = ArmTag("right" if self.bell.get_pose().p[0] > 0 else "left")
+        self.reward = Reward.build_top({
+            "type": "Serial",
+            "subtasks":
+                [   
+                    Contact(
+                        base=self, max_reward=4, entity=self.bell, 
+                        arm_tag=arm_tag, entity_name="050_bell",entity_idx=0,
+                    ),
+                    Success()
+                ],
+            "transition_rewards":[
+                1,
+            ]
+        })
+        self.step_lim = 450
     
     def play_once(self):
         # Choose the arm to use: right arm if the bell is on the right side (positive x), left otherwise
@@ -68,6 +86,11 @@ class click_bell(Base_Task):
         return self.info
 
 
+
+    def get_info(self):
+        arm_tag = ArmTag("right" if self.bell.get_pose().p[0] > 0 else "left")
+        info = {"{A}": f"050_bell/base{self.bell_id}", "{a}": str(arm_tag)}
+        return info
     def check_success(self):
         if self.stage_success_tag:
             return True

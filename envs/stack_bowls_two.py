@@ -1,5 +1,6 @@
 from ._base_task import Base_Task
 from .utils import *
+from .reward import *
 import sapien
 import math
 
@@ -51,6 +52,20 @@ class stack_bowls_two(Base_Task):
         self.prohibited_area.append(target_pose)
         self.bowl1_target_pose = np.array([0, -0.1, 0.76])
         self.quat_of_target_pose =  [0, 0.707, 0.707, 0]
+
+        self.reward = Reward.build_top(
+            {
+                "type": "Serial",
+                "subtasks": [
+                    Stack(self, max_reward=4.0,
+                         entities=[self.bowl1, self.bowl2],
+                         eps=[0.13, 0.03], a_ds=[2], c_ds=[4], target_pose=[0, -0.1]),
+                    Success()
+                ],
+                "transition_rewards": [2.0]
+            }
+        )
+        self.step_lim = 800
 
     def move_bowl(self, actor, target_pose):
         actor_pose = actor.get_pose().p
@@ -107,6 +122,22 @@ class stack_bowls_two(Base_Task):
         }
         return self.info
 
+
+    def get_info(self):
+        # arm_tag1 = self.move_bowl(self.bowl1, self.bowl1_target_pose)
+        actor_pose = self.bowl1.get_pose().p
+        arm_tag1 = ArmTag("left" if actor_pose[0] < 0 else "right")
+        # Move bowl2 to be 0.05m above bowl1's position
+        # arm_tag2 = self.move_bowl(self.bowl2, self.bowl1.get_pose().p + [0, 0, 0.05])
+        actor_pose = self.bowl2.get_pose().p
+        arm_tag2 = ArmTag("left" if actor_pose[0] < 0 else "right")
+        info = {
+            "{A}": f"002_bowl/base3",
+            "{B}": f"002_bowl/base3",
+            "{a}": str(arm_tag1),
+            "{b}": str(arm_tag2),
+        }
+        return info
     def check_success(self):
         bowl1_pose = self.bowl1.get_pose().p
         bowl2_pose = self.bowl2.get_pose().p

@@ -116,6 +116,16 @@ class place_object_stand(Base_Task):
         }
         return self.info
 
+
+    def get_info(self):
+        arm_tag = ArmTag("right" if self.object.get_pose().p[0] > 0 else "left")
+
+        info = {
+            "{A}": f"{self.selected_modelname}/base{self.selected_model_id}",
+            "{B}": f"074_displaystand/base{self.displaystand_id}",
+            "{a}": str(arm_tag),
+        }
+        return info
     def check_success(self):
         object_pose = self.object.get_pose().p
         displaystand_pose = self.displaystand.get_pose().p

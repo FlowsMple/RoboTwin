@@ -113,6 +113,15 @@ class place_object_scale(Base_Task):
         }
         return self.info
 
+
+    def get_info(self):
+        self.arm_tag = ArmTag("right" if self.object.get_pose().p[0] > 0 else "left")
+        info = {
+            "{A}": f"072_electronicscale/base{self.scale_id}",
+            "{B}": f"{self.selected_modelname}/base{self.selected_model_id}",
+            "{a}": str(self.arm_tag),
+        }
+        return info
     def check_success(self):
         object_pose = self.object.get_pose().p
         scale_pose = self.scale.get_functional_point(0)

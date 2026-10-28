@@ -1,5 +1,6 @@
 from ._base_task import Base_Task
 from .utils import *
+from .reward import *
 import sapien
 import math
 from copy import deepcopy
@@ -86,6 +87,19 @@ class place_fan(Base_Task):
         target_pose = self.pad.get_pose().p
         self.target_pose = target_pose.tolist() + [1, 0, 0, 0]
 
+        self.step_lim = 450
+        place_target_pose = self.target_pose[:3] + [0.707, 0.707, 0.0, 0.0]
+        self.reward = Reward.build_top(dict(
+            subtasks=[
+                Pick(base=self, max_reward=4, entity=self.fan, dist=0.19),
+                Place(base=self, max_reward=4, entity=self.fan, target=place_target_pose),
+                Success(base=None)
+            ],
+            transition_rewards=[
+                1, 3
+            ]
+        ))
+
     def play_once(self):
         # Determine which arm is closer to the object based on x-coordinate of the fan's position
         arm_tag = ArmTag("right" if self.fan.get_pose().p[0] > 0 else "left")
@@ -113,6 +127,16 @@ class place_fan(Base_Task):
         }
         return self.info
 
+
+    def get_info(self):
+        arm_tag = ArmTag("right" if self.fan.get_pose().p[0] > 0 else "left")
+
+        info = {
+            "{A}": f"099_fan/base{self.fan_id}",
+            "{B}": self.color_name,
+            "{a}": str(arm_tag),
+        }
+        return info
     def check_success(self):
         fan_qpose = self.fan.get_pose().q
         fan_pose = self.fan.get_pose().p

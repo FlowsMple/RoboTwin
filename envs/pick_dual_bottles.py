@@ -1,5 +1,6 @@
 from ._base_task import Base_Task
 from .utils import *
+from .reward import *
 import sapien
 from copy import deepcopy
 
@@ -47,6 +48,59 @@ class pick_dual_bottles(Base_Task):
         self.left_target_pose = [-0.06, -0.105, 1, 0, 1, 0, 0]
         self.right_target_pose = [0.06, -0.105, 1, 0, 1, 0, 0]
 
+        self.reward = Reward.build_top(
+            {
+                "type": "Serial",
+                "subtasks": [
+                    {
+                        "type": "Parallel",
+                        "subtasks": [
+                            {
+                                "type": "Serial",
+                                "subtasks": [
+                                    Pick(
+                                        base=self, max_reward=4, 
+                                        entity=self.bottle1, dist=0.19,
+                                        arm_tag=0
+                                    ),
+                                    Place(
+                                        base=self, max_reward=4, 
+                                        entity=self.bottle1, 
+                                        target=[self.left_target_pose[0], self.left_target_pose[1], 0.89],
+                                        eef_dim=3,
+                                        arm_tag=0
+                                    ),
+                                ],
+                                "transition_rewards": [1]
+                            },
+                            {
+                                "type": "Serial",
+                                "subtasks": [
+                                    Pick(
+                                        base=self, max_reward=4, 
+                                        entity=self.bottle2, dist=0.19,
+                                        arm_tag=1
+                                    ),
+                                    Place(
+                                        base=self, max_reward=4, 
+                                        entity=self.bottle2, 
+                                        target=[self.right_target_pose[0], self.right_target_pose[1], 0.89],
+                                        eef_dim=3,
+                                        arm_tag=1
+                                    ),
+                                ],
+                                "transition_rewards": [1]
+                            },
+                        ],
+                        "weights": [1, 1]
+                    },
+                    Success() 
+                ],
+                "transition_rewards":[3]
+            }
+        )
+        self.step_lim = 450
+
     def play_once(self):
         # Determine which arm to use for each bottle based on their x-coordinate position
         bottle1_arm_tag = ArmTag("left")
@@ -89,6 +143,10 @@ class pick_dual_bottles(Base_Task):
         self.info["info"] = {"{A}": f"001_bottle/base13", "{B}": f"001_bottle/base16"}
         return self.info
 
+
+    def get_info(self):
+        info = {"{A}": f"001_bottle/base13", "{B}": f"001_bottle/base16"}
+        return info
     def check_success(self):
         bottle1_target = self.left_target_pose[:2]
         bottle2_target = self.right_target_pose[:2]

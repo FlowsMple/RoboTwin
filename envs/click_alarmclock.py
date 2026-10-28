@@ -1,6 +1,7 @@
 from copy import deepcopy
 from ._base_task import Base_Task
 from .utils import *
+from .reward import *
 import sapien
 import math
 
@@ -38,6 +39,23 @@ class click_alarmclock(Base_Task):
         )
         self.add_prohibit_area(self.alarm, padding=0.05)
         self.check_arm_function = self.is_left_gripper_close if self.alarm.get_pose().p[0] < 0 else self.is_right_gripper_close
+        arm_tag = ArmTag("right" if self.alarm.get_pose().p[0] > 0 else "left")
+
+        self.reward = Reward.build_top({
+            "type": "Serial",
+            "subtasks":
+                [   
+                    Contact(
+                        base=self, max_reward=4, entity=self.alarm, 
+                        arm_tag=arm_tag, entity_name="046_alarm-clock",entity_idx=0,
+                    ),
+                    Success()
+                ],
+            "transition_rewards":[
+                1,
+            ]
+        })
+        self.step_lim = 450
 
     def play_once(self):
         # Determine which arm to use based on alarm clock's position (right if positive x, left otherwise)
@@ -77,6 +95,15 @@ class click_alarmclock(Base_Task):
         return self.info
 
 
+
+    def get_info(self):
+        arm_tag = ArmTag("right" if self.alarm.get_pose().p[0] > 0 else "left")
+
+        info = {
+            "{A}": f"046_alarm-clock/base{self.alarmclock_id}",
+            "{a}": str(arm_tag),
+        }
+        return info
     def check_success(self):
         if self.stage_success_tag:
             return True

@@ -435,6 +435,24 @@ class Base_Task(gym.Env):
 
     # =========================================================== Basic APIs ===========================================================
 
+    def compress_path(self, path, tolerance=1e-5):
+        compressed = [path[0]]
+        for i in range(1, len(path)):
+            if not np.allclose(path[i], compressed[-1], atol=tolerance, rtol=0):
+                compressed.append(path[i])
+        if len(compressed) == 1:
+            compressed.append(compressed[0].copy() + np.random.normal(0, 2e-4, 6))
+        return np.array(compressed)
+
+    def downsample_trajectory(self, positions, velocities, max_points=500):
+        n_points = positions.shape[0]
+        assert positions.shape[0] == velocities.shape[0]
+        if n_points <= max_points:
+            return positions, velocities
+        indices = np.linspace(0, n_points - 1, max_points).astype(int)
+        indices = np.unique(indices)
+        return positions[indices], velocities[indices]
+
     def get_obs(self):
         self._update_render()
         self.cameras.update_picture()
@@ -1739,6 +1757,270 @@ class Base_Task(gym.Env):
             self.viewer.render()
 
 
+    def gen_sparse_reward_data(
+        self,
+        chunk_actions,
+        action_type="qpos",
+        collect_obs=False,
+    ):
+
+        infos = {
+            "success": False,
+        }
+        reward = np.array([0], dtype=np.float32)
+        termination = np.array([0], dtype=np.int32)
+        truncation = np.array([0], dtype=np.int32)
+        collected_obs = []
+        action_len = chunk_actions.shape[0]
+
+        def build_result(
+            *,
+            valid_action_count=None,
+            reuse_last_observation=False,
+        ):
+            if not collect_obs:
+                return reward, termination, truncation, infos
+
+            executed_action_count = (
+                len(collected_obs)
+                if valid_action_count is None
+                else valid_action_count
+            )
+            if len(collected_obs) < action_len:
+                final_obs = (
+                    collected_obs[-1]
+                    if reuse_last_observation and collected_obs
+                    else self.get_obs()
+                )
+                collected_obs.extend([final_obs] * (action_len - len(collected_obs)))
+
+            infos["executed_action_count"] = executed_action_count
+            return reward, termination, truncation, infos, collected_obs
+
+        if getattr(self, "eval_success", False):
+            infos["success"] = True
+            reward = np.array([1], dtype=np.float32)
+            termination = np.array([1], dtype=np.int32)
+            return build_result()
+
+        if self.take_action_cnt == self.step_lim:
+            truncation = np.array([1], dtype=np.int32)
+            return build_result()
+
+        self.take_action_cnt += chunk_actions.shape[0]
+
+        self._update_render()
+        if self.render_freq:
+            self.viewer.render()
+
+        actions = chunk_actions
+        left_jointstate = self.robot.get_left_arm_jointState()
+        right_jointstate = self.robot.get_right_arm_jointState()
+        left_arm_dim = len(left_jointstate) - 1
+        right_arm_dim = len(right_jointstate) - 1
+        current_jointstate = np.array(left_jointstate + right_jointstate)
+
+        left_arm_actions, left_gripper_actions, left_current_qpos, left_path = (
+            [],
+            [],
+            [],
+            [],
+        )
+        right_arm_actions, right_gripper_actions, right_current_qpos, right_path = (
+            [],
+            [],
+            [],
+            [],
+        )
+
+        left_arm_actions, left_gripper_actions = (
+            actions[:, :left_arm_dim],
+            actions[:, left_arm_dim],
+        )
+        right_arm_actions, right_gripper_actions = (
+            actions[:, left_arm_dim + 1 : left_arm_dim + right_arm_dim + 1],
+            actions[:, left_arm_dim + right_arm_dim + 1],
+        )
+        left_current_qpos, right_current_qpos = (
+            current_jointstate[:left_arm_dim],
+            current_jointstate[left_arm_dim + 1 : left_arm_dim + right_arm_dim + 1],
+        )
+        left_current_gripper, right_current_gripper = (
+            current_jointstate[left_arm_dim : left_arm_dim + 1],
+            current_jointstate[
+                left_arm_dim + right_arm_dim + 1 : left_arm_dim + right_arm_dim + 2
+            ],
+        )
+
+        left_path = np.vstack((left_current_qpos, left_arm_actions))
+        left_gripper_path = np.hstack((left_current_gripper, left_gripper_actions))
+        right_path = np.vstack((right_current_qpos, right_arm_actions))
+        right_gripper_path = np.hstack((right_current_gripper, right_gripper_actions))
+
+        left_path = self.compress_path(left_path)
+        right_path = self.compress_path(right_path)
+
+        # ========== TOPP ==========
+        topp_left_flag, topp_right_flag = True, True
+
+        try:
+            times, left_pos, left_vel, acc, duration = (
+                self.robot.left_mplib_planner.TOPP(left_path, 1 / 250, verbose=True)
+            )
+
+            left_pos, left_vel = self.downsample_trajectory(left_pos, left_vel)
+
+            left_result = dict()
+            left_result["position"], left_result["velocity"] = left_pos, left_vel
+            left_n_step = left_result["position"].shape[0]
+        except Exception as e:
+            # print("left arm TOPP error: ", e)
+            topp_left_flag = False
+            left_n_step = 50  # fixed
+
+        if left_n_step == 0:
+            topp_left_flag = False
+            left_n_step = 50  # fixed
+
+        try:
+            times, right_pos, right_vel, acc, duration = (
+                self.robot.right_mplib_planner.TOPP(right_path, 1 / 250, verbose=True)
+            )
+
+            right_pos, right_vel = self.downsample_trajectory(right_pos, right_vel)
+
+            right_result = dict()
+            right_result["position"], right_result["velocity"] = right_pos, right_vel
+            right_n_step = right_result["position"].shape[0]
+        except Exception as e:
+            # print("right arm TOPP error: ", e)
+            topp_right_flag = False
+            right_n_step = 50  # fixed
+
+        if right_n_step == 0:
+            topp_right_flag = False
+            right_n_step = 50  # fixed
+
+        # ========== Gripper ==========
+
+        left_mod_num = left_n_step % len(left_gripper_actions)
+        right_mod_num = right_n_step % len(right_gripper_actions)
+        left_gripper_step = [0] + [
+            left_n_step // len(left_gripper_actions) + (1 if i < left_mod_num else 0)
+            for i in range(len(left_gripper_actions))
+        ]
+        right_gripper_step = [0] + [
+            right_n_step // len(right_gripper_actions) + (1 if i < right_mod_num else 0)
+            for i in range(len(right_gripper_actions))
+        ]
+
+        left_gripper = []
+        for gripper_step in range(1, left_gripper_path.shape[0]):
+            region_left_gripper = np.linspace(
+                left_gripper_path[gripper_step - 1],
+                left_gripper_path[gripper_step],
+                left_gripper_step[gripper_step] + 1,
+            )[1:]
+            left_gripper = left_gripper + region_left_gripper.tolist()
+        left_gripper = np.array(left_gripper)
+
+        right_gripper = []
+        for gripper_step in range(1, right_gripper_path.shape[0]):
+            region_right_gripper = np.linspace(
+                right_gripper_path[gripper_step - 1],
+                right_gripper_path[gripper_step],
+                right_gripper_step[gripper_step] + 1,
+            )[1:]
+            right_gripper = right_gripper + region_right_gripper.tolist()
+        right_gripper = np.array(right_gripper)
+
+        if collect_obs:
+            left_action_end_steps = np.cumsum(left_gripper_step[1:])
+            right_action_end_steps = np.cumsum(right_gripper_step[1:])
+
+        now_left_id, now_right_id = 0, 0
+
+        # ========== Control Loop ==========
+        steps_executed = 0
+
+        while now_left_id < left_n_step or now_right_id < right_n_step:
+            if (
+                now_left_id < left_n_step
+                and now_left_id / left_n_step <= now_right_id / right_n_step
+            ):
+                if topp_left_flag:
+                    self.robot.set_arm_joints(
+                        left_result["position"][now_left_id],
+                        left_result["velocity"][now_left_id],
+                        "left",
+                    )
+                self.robot.set_gripper(left_gripper[now_left_id], "left")
+
+                now_left_id += 1
+
+            if (
+                now_right_id < right_n_step
+                and now_right_id / right_n_step <= now_left_id / left_n_step
+            ):
+                if topp_right_flag:
+                    self.robot.set_arm_joints(
+                        right_result["position"][now_right_id],
+                        right_result["velocity"][now_right_id],
+                        "right",
+                    )
+                self.robot.set_gripper(right_gripper[now_right_id], "right")
+
+                now_right_id += 1
+
+            self.scene.step()
+            self._update_render()
+            steps_executed += 1
+
+            completed_action_this_step = False
+            if collect_obs:
+                completed_before = len(collected_obs)
+                while len(collected_obs) < action_len:
+                    action_idx = len(collected_obs)
+                    left_reached = now_left_id >= left_action_end_steps[action_idx]
+                    right_reached = now_right_id >= right_action_end_steps[action_idx]
+                    if not (left_reached and right_reached):
+                        break
+                    collected_obs.append(self.get_obs())
+                completed_action_this_step = len(collected_obs) > completed_before
+
+            if self.check_success():
+                self.eval_success = True
+
+                infos["success"] = True
+                reward = np.array([1], dtype=np.float32)
+                termination = np.array([1], dtype=np.int32)
+                valid_action_count = len(collected_obs)
+                if (
+                    collect_obs
+                    and not completed_action_this_step
+                    and steps_executed > 0
+                    and valid_action_count < action_len
+                ):
+                    valid_action_count += 1
+                return build_result(
+                    valid_action_count=valid_action_count,
+                    reuse_last_observation=completed_action_this_step,
+                )
+
+        if getattr(self, "eval_success", False):
+            infos["success"] = True
+            reward = np.array([1], dtype=np.float32)
+            termination = np.array([1], dtype=np.int32)
+
+        if self.take_action_cnt >= self.step_lim:
+            truncation = np.array([1], dtype=np.int32)
+
+        self._update_render()
+        if self.render_freq:  # UI
+            self.viewer.render()
+        return build_result()
+
+
     def save_camera_images(self, task_name, step_name, generate_num_id, save_dir="./camera_images"):
         """
         Save camera images - patched version to ensure consistent episode numbering across all steps.
@@ -1794,3 +2076,204 @@ class Base_Task(gym.Env):
             # print(f"Saving image with episode_num={episode_num}, filename: {filename}, path: {generate_dir}")
         
         return image_data
+
+    def gen_dense_reward_once(self, chunk_actions, las_reward = None):
+        obs_return = []
+        obs_return.append(self.get_obs())
+
+        infos = {
+            "success": False,
+        }
+        reward = np.array([0])
+        termination = np.array([0])
+        truncation = np.array([0])
+
+        if self.eval_success:
+            self.eval_success = True
+            reward = np.array([1])
+            termination = np.array([1])
+            infos["success"] = True
+
+        if self.run_steps >= self.step_lim:
+            truncation = np.array([1])
+            return obs_return, reward, termination, truncation, infos
+        
+        if self.eval_success:
+            return obs_return, reward, termination, truncation, infos
+
+        # return obs, reward, termination, truncation, infos
+        # 辅助计算reward用的
+        self.episode_left_eef_poses = [self.robot.get_left_ee_pose()]
+        self.episode_right_eef_poses = [self.robot.get_right_ee_pose()]
+        self.episode_left_joint_states = [self.robot.get_left_arm_jointState()]
+        self.episode_right_joint_states = [self.robot.get_right_arm_jointState()]
+        self.episode_left_gripper_state = [self.robot.is_left_gripper_open()]
+        self.episode_right_gripper_state = [self.robot.is_right_gripper_open()]
+
+        for step in range(chunk_actions.shape[0]):
+            actions = chunk_actions[step]
+            left_jointstate = self.robot.get_left_arm_jointState()
+            right_jointstate = self.robot.get_right_arm_jointState()
+            current_jointstate = np.array(left_jointstate + right_jointstate)
+
+            left_arm_actions , left_gripper_actions , left_current_qpos, left_path = [], [], [], []
+            right_arm_actions , right_gripper_actions , right_current_qpos, right_path = [], [], [], []
+            if self.dual_arm:
+                left_arm_actions,left_gripper_actions = actions[:, :6],actions[:, 6]
+                right_arm_actions,right_gripper_actions = actions[:, 7:13],actions[:, 13]
+                left_current_qpos, right_current_qpos = current_jointstate[:6], current_jointstate[7:13]
+                left_current_gripper, right_current_gripper = current_jointstate[6:7], current_jointstate[13:14] 
+            else:
+                right_arm_actions,right_gripper_actions = actions[:, :6],actions[:, 6]
+                right_current_qpos = current_jointstate[:6]
+                right_current_gripper = current_jointstate[6:7]
+            
+            if self.dual_arm:
+                left_path = np.vstack((left_current_qpos, left_arm_actions))
+                left_gripper_path = np.hstack((left_current_gripper, left_gripper_actions))
+            right_path = np.vstack((right_current_qpos, right_arm_actions))
+            right_gripper_path = np.hstack((right_current_gripper, right_gripper_actions))
+
+            left_path = self.compress_path(left_path)
+            right_path = self.compress_path(right_path)
+
+            topp_left_flag, topp_right_flag = True, True
+            try:
+                times, left_pos, left_vel, acc, duration = self.robot.left_mplib_planner.TOPP(left_path, 1/250, verbose=True)
+                left_pos, left_vel = self.downsample_trajectory(left_pos, left_vel)
+                left_result = dict()
+                left_result['position'], left_result['velocity'] = left_pos, left_vel
+                left_n_step = left_result["position"].shape[0]
+                # left_gripper = np.linspace(left_gripper[0], left_gripper[-1], left_n_step)
+            except Exception as e:
+                topp_left_flag = False
+                left_n_step = 1
+            
+            if left_n_step == 0 or (not self.dual_arm):
+                topp_left_flag = False
+                left_n_step = 1
+
+            try:
+                times, right_pos, right_vel, acc, duration = self.robot.right_mplib_planner.TOPP(right_path, 1/250, verbose=True)            
+                right_pos, right_vel = self.downsample_trajectory(right_pos, right_vel)
+                right_result = dict()
+                right_result['position'], right_result['velocity'] = right_pos, right_vel
+                right_n_step = right_result["position"].shape[0]
+                # right_gripper = np.linspace(right_gripper[0], right_gripper[-1], right_n_step)
+            except Exception as e:
+                topp_right_flag = False
+                right_n_step = 1
+        
+            if right_n_step == 0:
+                topp_right_flag = False
+                right_n_step = 1
+        
+            n_step = max(left_n_step, right_n_step)
+
+            obs_update_freq = n_step // actions.shape[0]
+
+            # Calculate gripper step path
+            left_mod_num = left_n_step % len(left_gripper_actions)
+            right_mod_num = right_n_step % len(right_gripper_actions)
+            left_gripper_step = [0] + [left_n_step // len(left_gripper_actions) + (1 if i < left_mod_num else 0) for i in range(len(left_gripper_actions))]
+            right_gripper_step = [0] + [right_n_step // len(right_gripper_actions) + (1 if i < right_mod_num else 0) for i in range(len(right_gripper_actions))]
+            
+            left_gripper = []
+            for gripper_step in range(1, left_gripper_path.shape[0]):
+                region_left_gripper = np.linspace(left_gripper_path[gripper_step-1], left_gripper_path[gripper_step], left_gripper_step[gripper_step]+1)[1:]
+                left_gripper = left_gripper + region_left_gripper.tolist()
+            left_gripper = np.array(left_gripper)
+
+            right_gripper = []
+            for gripper_step in range(1, right_gripper_path.shape[0]):
+                region_right_gripper = np.linspace(right_gripper_path[gripper_step-1], right_gripper_path[gripper_step], right_gripper_step[gripper_step]+1)[1:]
+                right_gripper = right_gripper + region_right_gripper.tolist()
+            right_gripper = np.array(right_gripper)
+
+            now_left_id = 0 if topp_left_flag else 1e9
+            now_right_id = 0 if topp_right_flag else 1e9
+        
+            while now_left_id < left_n_step or now_right_id < right_n_step:
+                if topp_left_flag and now_left_id < left_n_step and now_left_id / left_n_step <= now_right_id / right_n_step:
+                    self.robot.set_arm_joints(left_result['position'][now_left_id], left_result['velocity'][now_left_id],'left')
+                    if not self.fix_gripper: 
+                        self.robot.set_gripper(left_gripper[now_left_id], 'left')
+
+                    now_left_id +=1
+                    
+                if topp_right_flag and now_right_id < right_n_step and now_right_id / right_n_step <= now_left_id / left_n_step:
+                    self.robot.set_arm_joints(right_result['position'][now_right_id], right_result['velocity'][now_right_id],'right')
+                    if not self.fix_gripper:
+                        self.robot.set_gripper(right_gripper[now_right_id], 'right')
+
+                    now_right_id +=1
+                
+                self.scene.step()
+                self._update_render()
+
+                if self.check_success():
+                    success_flag = True
+                    break
+            if step > chunk_actions.shape[0] - 3:
+                obs_return.append(self.get_obs())
+
+            self._update_render()
+
+            self.episode_left_eef_poses.append(np.array(self.robot.get_left_ee_pose()))
+            self.episode_right_eef_poses.append(np.array(self.robot.get_right_ee_pose()))
+            self.episode_left_joint_states.append(np.array(self.robot.get_left_arm_jointState()))
+            self.episode_right_joint_states.append(np.array(self.robot.get_right_arm_jointState()))
+            self.episode_left_gripper_state.append(self.robot.is_left_gripper_open())
+            self.episode_right_gripper_state.append(self.robot.is_right_gripper_open())
+
+            # TODO:添加状态转移判定方程
+            self.reward.update()
+
+            self.run_steps += 1
+
+            if self.check_success():
+                self.eval_success = True
+                reward = np.array([1])
+                termination = np.array([1])
+                infos["success"] = True
+
+            if self.run_steps >= self.step_lim:
+                truncation = np.array([1])
+                return obs_return, reward, termination, truncation, infos
+            
+            if self.eval_success:
+                return obs_return, reward, termination, truncation, infos
+
+        # reward = self.gain_reward * self.dense_reward(check_status_lst[self.now_status])
+        reward = self.reward.compute_reward()
+        return obs_return, np.array([reward]), termination, truncation, infos
+
+    def is_in_hand(self, actor):
+        # 判断夹爪中心位置与物体中心位置的距离, 夹爪是否关闭
+        if self.dual_arm:
+            contacts = self.scene.get_contacts()
+            left_gripper_contact_count = 0
+            right_gripper_contact_count = 0
+            for contact in contacts:
+                if contact.bodies[0].entity.get_name() == actor.get_name() or contact.bodies[1].entity.get_name() == actor.get_name():
+                    contact_object = contact.bodies[1].entity.get_name() if contact.bodies[0].entity.get_name() == actor.get_name() else contact.bodies[0].entity.get_name()
+                    flag = 0
+                    if contact_object == "fl_link7" or contact_object == "fl_link8":
+                        for point in contact.points:
+                            if not all(impulse == 0 for impulse in point.impulse):
+                                flag = 1
+                        if flag:
+                            left_gripper_contact_count += 1
+                    if contact_object == "fr_link7" or contact_object == "fr_link8":
+                        for point in contact.points:
+                            if not all(impulse == 0 for impulse in point.impulse):
+                                flag = 1
+                        if flag:
+                            right_gripper_contact_count += 1
+            # print("contact:", left_gripper_contact_count, right_gripper_contact_count)
+            return (left_gripper_contact_count >= 2 and self.robot.is_left_gripper_close()),(right_gripper_contact_count >= 2 and self.robot.is_right_gripper_close())
+        else:
+            eef_pose = np.array(self.robot.get_ee_pose())[:3]
+            actor_pos = np.array(actor.get_pose().p)
+            in_hand = bool(np.linalg.norm(eef_pose - actor_pos) < 0.05)
+            return in_hand, False

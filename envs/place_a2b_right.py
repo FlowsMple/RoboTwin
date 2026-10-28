@@ -1,6 +1,7 @@
 from ._base_task import Base_Task
 from .model_utils import get_available_model_ids
 from .utils import *
+from .reward import *
 import sapien
 import math
 from ._GLOBAL_CONFIGS import *
@@ -106,6 +107,23 @@ class place_a2b_right(Base_Task):
         self.add_prohibit_area(self.object, padding=0.05)
         self.add_prohibit_area(self.target_object, padding=0.1)
 
+        arm_tag = ArmTag("right" if self.object.get_pose().p[0] > 0 else "left")
+        target_pose = self.target_object.get_pose().p.tolist()
+        target_pose[0] += 0.13
+
+        self.step_lim = 450
+        self.reward = Reward.build_top(
+            {
+                "type": "Serial",
+                "subtasks": [
+                    Pick(base=self, max_reward=4, entity=self.object, dist=0.28, arm_tag=arm_tag),
+                    Place(base=self, max_reward=4, entity=self.object, target=target_pose, eef_dim=3),
+                    Success(base=None),
+                ],
+                "transition_rewards": [1,3]
+            }
+        )
+
     def play_once(self):
         # Determine which arm to use based on object's x position (right if positive, left if negative)
         arm_tag = ArmTag("right" if self.object.get_pose().p[0] > 0 else "left")
@@ -130,6 +148,15 @@ class place_a2b_right(Base_Task):
         }
         return self.info
 
+
+    def get_info(self):
+        arm_tag = ArmTag("right" if self.object.get_pose().p[0] > 0 else "left")
+        info = {
+            "{A}": f"{self.selected_modelname_A}/base{self.selected_model_id_A}",
+            "{B}": f"{self.selected_modelname_B}/base{self.selected_model_id_B}",
+            "{a}": str(arm_tag),
+        }
+        return info
     def check_success(self):
         object_pose = self.object.get_pose().p
         target_pos = self.target_object.get_pose().p

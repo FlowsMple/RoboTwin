@@ -1,5 +1,6 @@
 from ._base_task import Base_Task
 from .utils import *
+from .reward import *
 import sapien
 
 
@@ -52,6 +53,22 @@ class place_empty_cup(Base_Task):
         self.delay(2)
         cup_pose = self.cup.get_pose().p
 
+        coaster_pose = self.coaster.get_functional_point(0, "pose").p
+        place_target_pose = list(coaster_pose[:2]) + [coaster_pose[2] + 0.015] + [0.5, 0.5, -0.5, -0.5]
+
+        self.step_lim = 450
+        self.reward = Reward.build_top(
+            {
+                "type": "Serial",
+                "subtasks": [
+                    Pick(base=self, max_reward=4, entity=self.cup, dist=0.28),
+                    Place(base=self, max_reward=4, entity=self.cup, target=place_target_pose),
+                    Success(base=None),
+                ],
+                "transition_rewards": [1,3]
+            }
+        )
+
     def play_once(self):
         # Get the current pose of the cup
         cup_pose = self.cup.get_pose().p
@@ -87,6 +104,10 @@ class place_empty_cup(Base_Task):
         self.info["info"] = {"{A}": "021_cup/base0", "{B}": "019_coaster/base0"}
         return self.info
 
+
+    def get_info(self):
+        info = {"{A}": "021_cup/base0", "{B}": "019_coaster/base0"}
+        return info
     def check_success(self):
         # eps = [0.03, 0.03, 0.015]
         eps = 0.035

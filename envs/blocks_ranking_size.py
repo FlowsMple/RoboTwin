@@ -1,5 +1,6 @@
 from ._base_task import Base_Task
 from .utils import *
+from .reward import *
 import sapien
 import math
 import numpy as np
@@ -98,6 +99,20 @@ class blocks_ranking_size(Base_Task):
             0.74 + self.table_z_bias,
         ] + [0, 1, 0, 0]
 
+        self.reward = Reward.build_top(
+            {
+                "type": "Serial",
+                "subtasks": [
+                    Rank(self, max_reward=8.0,
+                         entities=[self.block1, self.block2, self.block3],
+                         eps=[0.13, 0.03], a_ds=[2, 2], c_ds=[3, 5]),
+                    Success()
+                ],
+                "transition_rewards": [2.0]
+            }
+        )
+        self.step_lim = 800
+
     def play_once(self):
         # Initialize last gripper state
         self.last_gripper = None
@@ -146,6 +161,22 @@ class blocks_ranking_size(Base_Task):
         self.last_gripper = arm_tag
         return str(arm_tag)
 
+
+    def get_info(self):
+        self.last_gripper = None
+        arm_tag3 = self.pick_and_place_block(self.block3, self.block3_target_pose)
+        arm_tag2 = self.pick_and_place_block(self.block2, self.block2_target_pose)
+        arm_tag1 = self.pick_and_place_block(self.block1, self.block1_target_pose)
+
+        info = {
+            "{A}": "large block",
+            "{B}": "medium block",
+            "{C}": "small block",
+            "{a}": arm_tag1,
+            "{b}": arm_tag2,
+            "{c}": arm_tag3,
+        }
+        return info
     def check_success(self):
         block1_pose = self.block1.get_pose().p
         block2_pose = self.block2.get_pose().p

@@ -1,5 +1,6 @@
 from ._base_task import Base_Task
 from .utils import *
+from .reward import *
 import sapien
 from ._GLOBAL_CONFIGS import *
 
@@ -53,6 +54,21 @@ class beat_block_hammer(Base_Task):
             block_pose.p[1] + 0.05,
         ])
 
+        place_target_pose = self.block.get_functional_point(1, "pose").p.tolist()
+
+        self.step_lim = 450
+        self.reward = Reward.build_top(
+            {
+                "type": "Serial",
+                "subtasks": [
+                    Pick(base=self, max_reward=4, entity=self.hammer, dist=0.28),
+                    Place(base=self, max_reward=4, entity=self.hammer, target=place_target_pose, eef_dim=2, is_function_point=0),
+                    Success(base=None)
+                ],
+                "transition_rewards": [1,3]
+            }
+        )
+
     def play_once(self):
         # Get the position of the block's functional point
         block_pose = self.block.get_functional_point(0, "pose").p
@@ -79,6 +95,12 @@ class beat_block_hammer(Base_Task):
         self.info["info"] = {"{A}": "020_hammer/base0", "{a}": str(arm_tag)}
         return self.info
 
+
+    def get_info(self):
+        block_pose = self.block.get_functional_point(0, "pose").p
+        arm_tag = ArmTag("left" if block_pose[0] < 0 else "right")
+        info = {"{A}": "020_hammer/base0", "{a}": str(arm_tag)}
+        return info
     def check_success(self):
         hammer_target_pose = self.hammer.get_functional_point(0, "pose").p
         block_pose = self.block.get_functional_point(1, "pose").p

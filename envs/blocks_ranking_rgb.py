@@ -1,5 +1,6 @@
 from ._base_task import Base_Task
 from .utils import *
+from .reward import *
 import sapien
 import math
 import numpy as np
@@ -103,6 +104,20 @@ class blocks_ranking_rgb(Base_Task):
             0.74 + self.table_z_bias,
         ] + [0, 1, 0, 0]
 
+        self.reward = Reward.build_top(
+            {
+                "type": "Serial",
+                "subtasks": [
+                    Rank(self, max_reward=8.0,
+                         entities=[self.block1, self.block2, self.block3],
+                         eps=[0.13, 0.03], a_ds=[2, 2], c_ds=[3, 5]),
+                    Success()
+                ],
+                "transition_rewards": [2.0]
+            }
+        )
+        self.step_lim = 800
+
     def play_once(self):
         # Initialize last gripper state
         self.last_gripper = None
@@ -152,6 +167,23 @@ class blocks_ranking_rgb(Base_Task):
         self.last_gripper = arm_tag
         return str(arm_tag)
 
+
+    def get_info(self):
+        block_pose = self.block1.get_pose().p
+        arm_tag1 = str(ArmTag("left" if block_pose[0] < 0 else "right"))
+        block_pose = self.block2.get_pose().p
+        arm_tag2 = str(ArmTag("left" if block_pose[0] < 0 else "right"))
+        block_pose = self.block3.get_pose().p
+        arm_tag3 = str(ArmTag("left" if block_pose[0] < 0 else "right"))
+        info = {
+            "{A}": "red block",
+            "{B}": "green block",
+            "{C}": "blue block",
+            "{a}": arm_tag1,
+            "{b}": arm_tag2,
+            "{c}": arm_tag3,
+        }
+        return info
     def check_success(self):
         block1_pose = self.block1.get_pose().p
         block2_pose = self.block2.get_pose().p

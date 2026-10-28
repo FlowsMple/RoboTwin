@@ -1,5 +1,6 @@
 from ._base_task import Base_Task
 from .utils import *
+from .reward import *
 import sapien
 import math
 
@@ -33,6 +34,27 @@ class adjust_bottle(Base_Task):
         self.left_target_pose = [-0.25, -0.12, 0.95, 0, 1, 0, 0]
         self.right_target_pose = [0.25, -0.12, 0.95, 0, 1, 0, 0]
 
+        self.reward = Reward.build_top({
+            "type": "Serial",
+            "subtasks":
+                [   
+                    Pick(
+                        base=self, max_reward=4, entity=self.bottle, dist=0.23,
+                        a_d=1, a_g=0.8
+                    ),
+                    Place(
+                        base=self, max_reward=4, entity=self.bottle, 
+                        target=[0.17 if self.qpose_tag == 1 else -0.17, 0, 0.9], eef_dim=[1, 0, 1],
+                        c_d=4, c_g=0
+                    ),
+                    Success()
+                ],
+            "transition_rewards":[
+                1, 3
+            ]
+        })
+        self.step_lim = 450
+
     def play_once(self):
         # Determine which arm to use based on qpose_tag (1 for right, else left)
         arm_tag = ArmTag("right" if self.qpose_tag == 1 else "left")
@@ -59,6 +81,13 @@ class adjust_bottle(Base_Task):
             "{a}": str(arm_tag),
         }
         return self.info
+
+    def get_info(self):
+        arm_tag = ArmTag("right" if self.qpose_tag == 1 else "left")
+        return {
+            "{A}": f"001_bottle/base{self.model_id}",
+            "{a}": str(arm_tag),
+        }
 
     def check_success(self):
         target_hight = 0.9

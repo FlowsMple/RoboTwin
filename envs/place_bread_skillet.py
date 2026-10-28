@@ -1,5 +1,6 @@
 from ._base_task import Base_Task
 from .utils import *
+from .reward import *
 import sapien
 import glob
 
@@ -58,6 +59,74 @@ class place_bread_skillet(Base_Task):
         self.add_prohibit_area(self.bread, padding=0.03)
         self.add_prohibit_area(self.skillet, padding=0.05)
 
+        arm_tag = ArmTag("right" if self.skillet.get_pose().p[0] > 0 else "left")
+        skillet_pose_1 = [self.skillet.get_pose().p[0], self.skillet.get_pose().p[1], 0.8]
+        bread_pose_1 = [self.bread.get_pose().p[0], self.bread.get_pose().p[1], 0.8]
+
+        self.step_lim = 600
+        self.reward = Reward.build_top(
+            {
+                "type": "Serial",
+                "subtasks": [
+                    {
+                        "type": "Parallel",
+                        "subtasks": [
+                            {
+                                "type": "Serial",
+                                "subtasks": [
+                                    Pick(
+                                        base=self, max_reward=1, 
+                                        c_d=0.5, c_g=0.5, 
+                                        entity=self.skillet, dist=0.19,
+                                        arm_tag=arm_tag
+                                    ),
+                                    Place(
+                                        base=self, max_reward=1, 
+                                        c_d=0.5, c_g=0.5, 
+                                        entity=self.skillet, 
+                                        target=skillet_pose_1,
+                                        eef_dim=3,
+                                        arm_tag=arm_tag,
+                                        eps=[0.05, 0.05, 0.02],
+                                        eps_mask=3,
+                                        name="skillet",
+                                    ),
+                                ],
+                                "transition_rewards": [0.5]
+                            },
+                            {
+                                "type": "Serial",
+                                "subtasks": [
+                                    Pick(
+                                        base=self, max_reward=1, 
+                                        c_d=0.5, c_g=0.5,  
+                                        entity=self.bread, dist=0.19,
+                                        arm_tag=arm_tag.opposite
+                                    ),
+                                    Place(
+                                        base=self, max_reward=1,
+                                        c_d=0.5, c_g=0.5, 
+                                        entity=self.bread, 
+                                        target=bread_pose_1,
+                                        eef_dim=3,
+                                        arm_tag=arm_tag.opposite,
+                                        eps=[0.05, 0.05, 0.02],
+                                        eps_mask=3,
+                                        name="bread",
+                                    ),
+                                ],
+                                "transition_rewards": [0.5]
+                            },
+                        ],
+                        "weights": [0.5, 0.5],
+                    },
+                    Place(base=self, max_reward=2, c_d=1, c_g=1, entity=self.bread, target=(self.skillet, 0), eef_dim=3, name="final"),
+                    Success() 
+                ],
+                "transition_rewards":[1, 1]
+            }
+        )
+
     def play_once(self):
         # Determine which arm to use based on skillet position (right if on positive x, left otherwise)
         arm_tag = ArmTag("right" if self.skillet.get_pose().p[0] > 0 else "left")
@@ -111,6 +180,16 @@ class place_bread_skillet(Base_Task):
         }
         return self.info
 
+
+    def get_info(self):
+        arm_tag = ArmTag("right" if self.skillet.get_pose().p[0] > 0 else "left")
+
+        info = {
+            "{A}": f"106_skillet/base{self.skillet_id}",
+            "{B}": f"075_bread/base{self.bread_id}",
+            "{a}": str(arm_tag),
+        }
+        return info
     def check_success(self):
         target_pose = self.skillet.get_functional_point(0)
         bread_pose = self.bread.get_pose().p
